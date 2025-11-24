@@ -1,4 +1,4 @@
-package com.springbootproject.heartbeat.dao;
+/*package com.springbootproject.heartbeat.dao;
 
 import fr.le_campus_numerique.square_games.engine.Game;
 import org.springframework.stereotype.Repository;
@@ -33,3 +33,4 @@ public class GameDaoMemoryImpl implements GameDao {
         return new ArrayList<>(games.values());
 }
 }
+*/

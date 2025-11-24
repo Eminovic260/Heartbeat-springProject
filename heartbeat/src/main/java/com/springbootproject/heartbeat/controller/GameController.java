@@ -4,6 +4,7 @@ import com.springbootproject.heartbeat.dto.GameCreationParams;
 import com.springbootproject.heartbeat.service.GameService;
 import fr.le_campus_numerique.square_games.engine.CellPosition;
 import fr.le_campus_numerique.square_games.engine.GameStatus;
+import fr.le_campus_numerique.square_games.engine.InconsistentGameDefinitionException;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 
@@ -19,8 +20,13 @@ public class GameController {
 
     @PostMapping("/games")
     public UUID createGame(@RequestBody GameCreationParams params) {
-        return gameService.createGame(params);
+        try {
+            return gameService.createGame(params);
+        } catch (InconsistentGameDefinitionException e) {
+            throw new RuntimeException("Impossible de créer la partie : " + e.getMessage(), e);
+        }
     }
+
     @GetMapping("/games")
     public Collection<String> getGames() {
         return gameService.getGameIdentifiers();

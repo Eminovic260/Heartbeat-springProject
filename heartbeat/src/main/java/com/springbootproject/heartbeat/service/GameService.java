@@ -8,7 +8,7 @@ import java.util.UUID;
 
 public interface GameService {
     Collection<String> getGameIdentifiers();
-    UUID createGame(GameCreationParams params);
+    UUID createGame(GameCreationParams params)throws InconsistentGameDefinitionException;
     GameStatus getGameStatus(UUID gameId);
     Collection<String> getBoard(UUID gameId);
     GameStatus endGame(UUID gameId);
@@ -17,6 +17,7 @@ public interface GameService {
     Set<CellPosition> getAllowedMoves(UUID gameId);
 
     GameStatus moveToken(UUID gameId, CellPosition from, CellPosition to);
+    void deleteGame(UUID gameId);
 
     GameStatus placeToken(UUID gameId, CellPosition to);
 }

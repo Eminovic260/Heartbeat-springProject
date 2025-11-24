@@ -9,7 +9,7 @@ import java.util.UUID;
 
 public interface GameDao {
 
-    Game createGame(Game game);
+    Game createGame(Game game, List<Player> players);
 
     Optional<Game> getGame(UUID id);
 
@@ -17,4 +17,6 @@ public interface GameDao {
 
     void deleteGame(UUID id);
     List<Game> getAllGames();
+    void addToken(UUID gameId, UUID playerId, int x, int y);
+
 }
