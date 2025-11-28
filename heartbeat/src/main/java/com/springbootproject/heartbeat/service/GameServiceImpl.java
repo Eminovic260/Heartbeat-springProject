@@ -1,23 +1,35 @@
 package com.springbootproject.heartbeat.service;
 
-import com.springbootproject.heartbeat.dao.GameDao;
 import com.springbootproject.heartbeat.dto.GameCreationParams;
-import com.springbootproject.heartbeat.model.Player;
+import com.springbootproject.heartbeat.entity.GameEntity;
+import com.springbootproject.heartbeat.entity.PlayerEntity;
+import com.springbootproject.heartbeat.entity.TokenEntity;
+import com.springbootproject.heartbeat.repository.GameRepository;
+import com.springbootproject.heartbeat.repository.PlayerRepository;
+import com.springbootproject.heartbeat.repository.TokenRepository;
 import fr.le_campus_numerique.square_games.engine.*;
 import fr.le_campus_numerique.square_games.engine.connectfour.ConnectFourGameFactory;
 import fr.le_campus_numerique.square_games.engine.tictactoe.TicTacToeGameFactory;
 import org.springframework.stereotype.Service;
 
 import java.util.*;
+import java.util.stream.Collectors;
 
 @Service
 public class GameServiceImpl implements GameService {
 
     private final Map<String, GameFactory> factories = new HashMap<>();
-    private final GameDao gameDao;
 
-    public GameServiceImpl(GameDao gameDao) {
-        this.gameDao = gameDao;
+    private final GameRepository gameRepository;
+    private final PlayerRepository playerRepository;
+    private final TokenRepository tokenRepository;
+
+    public GameServiceImpl(GameRepository gameRepository,
+                           PlayerRepository playerRepository,
+                           TokenRepository tokenRepository) {
+        this.gameRepository = gameRepository;
+        this.playerRepository = playerRepository;
+        this.tokenRepository = tokenRepository;
 
         TicTacToeGameFactory tttFactory = new TicTacToeGameFactory();
         ConnectFourGameFactory cfFactory = new ConnectFourGameFactory();
@@ -52,129 +64,109 @@ public class GameServiceImpl implements GameService {
                 new ArrayList<>()
             );
 
-            List<Player> players = new ArrayList<>();
+            GameEntity gameEntity = new GameEntity();
+            gameEntity.setId(game.getId());
+            gameEntity.setType(params.getGameType());
+            gameEntity.setBoardSize(params.getBoardSize());
+            gameEntity.setPlayerCount(params.getPlayerCount());
+            gameEntity.setStatus("ONGOING");
+            gameRepository.save(gameEntity);
+
             char symbol = 'X';
             for (UUID playerId : playerIds) {
-                players.add(new Player(playerId, String.valueOf(symbol)));
+                PlayerEntity playerEntity = new PlayerEntity();
+                playerEntity.setId(playerId);
+                playerEntity.setGame(gameEntity);
+                playerEntity.setSymbol(String.valueOf(symbol));
+                playerRepository.save(playerEntity);
                 symbol = (symbol == 'X') ? 'O' : 'X';
             }
 
-            gameDao.createGame(game, players);
             return game.getId();
+
         } catch (InconsistentGameDefinitionException e) {
             throw new RuntimeException("Impossible de créer la partie", e);
         }
     }
 
-
     @Override
     public GameStatus getGameStatus(UUID gameId) {
-        Game game = gameDao.getGame(gameId)
+        GameEntity game = gameRepository.findById(gameId)
             .orElseThrow(() -> new IllegalArgumentException("Game not found: " + gameId));
-        return game.getStatus();
+        return GameStatus.ONGOING;
     }
 
     @Override
     public Collection<String> getBoard(UUID gameId) {
-        Game game = gameDao.getGame(gameId)
-            .orElseThrow(() -> new IllegalArgumentException("Game not found: " + gameId));
-
-        List<String> result = new ArrayList<>();
-        for (var entry : game.getBoard().entrySet()) {
-            result.add("Position: " + entry.getKey() + ", Token: " + entry.getValue());
-        }
-        return result;
-    }
-
-    @Override
-    public GameStatus endGame(UUID gameId) {
-        return getGameStatus(gameId);
+        List<TokenEntity> tokens = tokenRepository.findByGameId(gameId);
+        return tokens.stream()
+            .map(t -> "Position: (" + t.getX() + "," + t.getY() + "), Owner: " + t.getPlayer().getSymbol())
+            .collect(Collectors.toList());
     }
 
     @Override
     public Set<CellPosition> getAllowedMoves(UUID gameId) {
-        Game game = gameDao.getGame(gameId)
-            .orElseThrow(() -> new IllegalArgumentException("Game not found: " + gameId));
-
+        List<TokenEntity> tokens = tokenRepository.findByGameId(gameId);
         Set<CellPosition> moves = new HashSet<>();
-        for (Token token : game.getRemainingTokens()) {
-            moves.addAll(token.getAllowedMoves());
+        for (TokenEntity token : tokens) {
+            moves.add(new CellPosition(token.getX() + 1, token.getY()));
+            moves.add(new CellPosition(token.getX() - 1, token.getY()));
+            moves.add(new CellPosition(token.getX(), token.getY() + 1));
+            moves.add(new CellPosition(token.getX(), token.getY() - 1));
         }
         return moves;
     }
 
     @Override
     public Set<CellPosition> getAllowedMoves(UUID gameId, CellPosition position) {
-        Game game = gameDao.getGame(gameId)
-            .orElseThrow(() -> new IllegalArgumentException("Game not found: " + gameId));
+        TokenEntity token = tokenRepository.findByGameIdAndXAndY(gameId, position.x(), position.y())
+            .orElseThrow(() -> new IllegalArgumentException("Token not found at " + position));
 
-        Token token = game.getBoard().get(position);
-        if (token == null) return Collections.emptySet();
-        return token.getAllowedMoves();
+        Set<CellPosition> moves = new HashSet<>();
+        moves.add(new CellPosition(token.getX() + 1, token.getY()));
+        moves.add(new CellPosition(token.getX() - 1, token.getY()));
+        moves.add(new CellPosition(token.getX(), token.getY() + 1));
+        moves.add(new CellPosition(token.getX(), token.getY() - 1));
+        return moves;
     }
 
     @Override
     public GameStatus moveToken(UUID gameId, CellPosition from, CellPosition to) {
-        Game game = gameDao.getGame(gameId)
-            .orElseThrow(() -> new IllegalArgumentException("Game not found: " + gameId));
+        TokenEntity token = tokenRepository.findByGameIdAndXAndY(gameId, from.x(), from.y())
+            .orElseThrow(() -> new IllegalArgumentException("Token not found at " + from));
 
-        Token token = game.getBoard().get(from);
-        if (token != null) {
-            try {
-                token.moveTo(to);
-                gameDao.updateGame(game);
-            } catch (InvalidPositionException e) {
-                throw new IllegalArgumentException("Cannot move token from " + from + " to " + to, e);
-            }
-        } else {
-            Optional<Token> remainingTokenOpt = game.getRemainingTokens().stream()
-                .filter(t -> t.getOwnerId().orElse(null).equals(game.getCurrentPlayerId()))
-                .findFirst();
+        token.setX(to.x());
+        token.setY(to.y());
+        tokenRepository.save(token);
 
-            if (remainingTokenOpt.isEmpty()) {
-                throw new IllegalArgumentException("No remaining token for current player");
-            }
-
-            token = remainingTokenOpt.get();
-            try {
-                token.moveTo(to);
-                gameDao.addToken(gameId, token.getOwnerId().orElseThrow(), to.x(), to.y());
-                gameDao.updateGame(game);
-            } catch (InvalidPositionException e) {
-                throw new IllegalArgumentException("Cannot place token at " + to, e);
-            }
-        }
-
-        return game.getStatus();
+        return GameStatus.ONGOING;
     }
 
     @Override
     public GameStatus placeToken(UUID gameId, CellPosition to) {
-        Game game = gameDao.getGame(gameId)
+        GameEntity game = gameRepository.findById(gameId)
             .orElseThrow(() -> new IllegalArgumentException("Game not found: " + gameId));
 
-        Optional<Token> remainingTokenOpt = game.getRemainingTokens().stream()
-            .filter(t -> t.getOwnerId().orElse(null).equals(game.getCurrentPlayerId()))
-            .findFirst();
+        PlayerEntity player = playerRepository.findByGameId(gameId).get(0); // premier joueur
+        TokenEntity token = new TokenEntity();
+        token.setGame(game);
+        token.setPlayer(player);
+        token.setX(to.x());
+        token.setY(to.y());
+        tokenRepository.save(token);
 
-        if (remainingTokenOpt.isEmpty()) {
-            throw new IllegalArgumentException("No remaining token for current player");
-        }
-
-        Token token = remainingTokenOpt.get();
-        try {
-            token.moveTo(to);
-            gameDao.addToken(gameId, token.getOwnerId().orElseThrow(), to.x(), to.y());
-            gameDao.updateGame(game);
-        } catch (InvalidPositionException e) {
-            throw new IllegalArgumentException("Cannot place token at " + to, e);
-        }
-
-        return game.getStatus();
+        return GameStatus.ONGOING;
     }
 
     @Override
     public void deleteGame(UUID gameId) {
-        gameDao.deleteGame(gameId);
+        gameRepository.deleteById(gameId);
     }
+    @Override
+    public GameStatus endGame(UUID gameId) {
+        GameEntity game = gameRepository.findById(gameId)
+            .orElseThrow(() -> new IllegalArgumentException("Game not found: " + gameId));
+        return GameStatus.ONGOING;
+    }
+
 }
